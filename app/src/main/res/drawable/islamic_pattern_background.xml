@@ -1,0 +1,65 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Background -->
+    <path
+        android:fillColor="@color/background"
+        android:pathData="M0,0h108v108h-108z" />
+    
+    <!-- Islamic Geometric Pattern -->
+    <!-- Repeating star pattern -->
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M18,18l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M54,18l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M90,18l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M18,54l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M54,54l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M90,54l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M18,90l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M54,90l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <path
+        android:fillColor="@color/secondary"
+        android:fillAlpha="0.1"
+        android:pathData="M90,90l12,0l3.7,-11.4l3.7,11.4l12,0l-9.7,7l3.7,11.4l-9.7,-7l-9.7,7l3.7,-11.4z" />
+    
+    <!-- Connecting lines -->
+    <path
+        android:strokeColor="@color/primary"
+        android:strokeAlpha="0.05"
+        android:strokeWidth="1"
+        android:pathData="M0,0 L108,108 M0,108 L108,0 M54,0 L54,108 M0,54 L108,54" />
+</vector>

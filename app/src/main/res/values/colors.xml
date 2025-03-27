@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    
+    <!-- Islamic/Arabic inspired color scheme -->
+    <color name="primary">#1F4E5F</color>        <!-- Deep Green - tranquility -->
+    <color name="secondary">#D4AF37</color>       <!-- Gold/Amber - spirituality -->
+    <color name="background">#F8F4E3</color>      <!-- Soft Cream - readability -->
+    <color name="accent">#800020</color>          <!-- Burgundy - important elements -->
+    
+    <color name="text_primary">#333333</color>
+    <color name="text_secondary">#666666</color>
+    <color name="divider">#DDDDDD</color>
+</resources>
