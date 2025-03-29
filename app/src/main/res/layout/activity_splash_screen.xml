@@ -23,7 +23,7 @@
         android:id="@+id/splashText"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Salah Silene"
+        android:text="Salah Silence"
         android:fontFamily="@font/outfitregular"
         android:textSize="24sp"
         android:textColor="@color/black"

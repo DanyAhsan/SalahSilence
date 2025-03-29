@@ -6,8 +6,11 @@ import android.app.TimePickerDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.PowerManager;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
@@ -15,6 +18,9 @@ import android.widget.TextView;
 import android.widget.TimePicker;
 import android.Manifest;
 import android.content.pm.PackageManager;
+import android.app.NotificationManager;
+import android.app.AlertDialog;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
@@ -29,6 +35,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.switchmaterial.SwitchMaterial;
+import com.google.android.material.snackbar.Snackbar;
 
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -41,8 +48,10 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
     private PrayerTimeAdapter adapter;
     private List<PrayerTime> prayerTimes;
     private static final int REQUEST_CODE_EXACT_ALARM_PERMISSION = 1;
-
     private static final int PERMISSION_REQUEST_CODE = 1001;
+    private static final int REQUEST_IGNORE_BATTERY_OPTIMIZATIONS = 1001;
+    private static final int REQUEST_NOTIFICATION_POLICY = 1002;
+    private static final int REQUEST_OVERLAY_PERMISSION = 1003;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,37 +84,120 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
             return insets;
         });
 
-        requestPermissions();
+        // Request battery optimization immediately after onCreate
+        requestBatteryOptimization();
+        checkAndRequestPermissions();
     }
 
-    private void requestPermissions() {
-        List<String> permissionsToRequest = new ArrayList<>();
-
-        // Add permissions you need
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-                != PackageManager.PERMISSION_GRANTED) {
-            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION);
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Check battery optimization status when app resumes
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (!pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                requestBatteryOptimization();
+            }
         }
+    }
 
-        // Notification permission for Android 13+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
-                    != PackageManager.PERMISSION_GRANTED) {
-                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS);
+    private void requestBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                String packageName = getPackageName();
+                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    Intent intent = new Intent();
+                    intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + packageName));
+                    startActivityForResult(intent, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                }
+            } catch (Exception e) {
+                Log.e("BatteryOptimization", "Error requesting battery optimization: " + e.getMessage());
+                // Show a dialog to guide user to manually disable battery optimization
+                showManualBatteryOptimizationDialog();
+            }
+        }
+    }
+
+    private void showManualBatteryOptimizationDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Battery Optimization")
+                .setMessage("For reliable operation, please manually disable battery optimization for SalahSilence:\n\n" +
+                        "1. Go to Settings\n" +
+                        "2. Search for 'Battery Optimization'\n" +
+                        "3. Find 'SalahSilence'\n" +
+                        "4. Select 'Don't optimize'")
+                .setPositiveButton("Open Settings", (dialog, which) -> {
+                    Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                    startActivity(intent);
+                })
+                .setNegativeButton("Later", null)
+                .show();
+    }
+
+    private void checkAndRequestPermissions() {
+        // Check for battery optimization again in case the first request failed
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            String packageName = getPackageName();
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                showBatteryOptimizationDialog();
             }
         }
 
-        // Add other permissions as needed, such as:
-        // - Manifest.permission.READ_CALENDAR
-        // - Other location or system-related permissions
-
-        if (!permissionsToRequest.isEmpty()) {
-            ActivityCompat.requestPermissions(
-                    this,
-                    permissionsToRequest.toArray(new String[0]),
-                    PERMISSION_REQUEST_CODE
-            );
+        // Check for DND permission
+        NotificationManager notificationManager = 
+                (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && 
+                !notificationManager.isNotificationPolicyAccessGranted()) {
+            showDNDPermissionDialog();
         }
+
+        // Check for overlay permission
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && 
+                !Settings.canDrawOverlays(this)) {
+            showOverlayPermissionDialog();
+        }
+    }
+
+    private void showBatteryOptimizationDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Battery Optimization")
+                .setMessage("To ensure SalahSilence works properly, please disable battery optimization for this app.")
+                .setPositiveButton("Disable", (dialog, which) -> {
+                    Intent intent = new Intent();
+                    intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivityForResult(intent, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                })
+                .setNegativeButton("Later", null)
+                .show();
+    }
+
+    private void showDNDPermissionDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Do Not Disturb Permission")
+                .setMessage("SalahSilence needs permission to change sound settings during prayer times.")
+                .setPositiveButton("Grant", (dialog, which) -> {
+                    Intent intent = new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS);
+                    startActivityForResult(intent, REQUEST_NOTIFICATION_POLICY);
+                })
+                .setNegativeButton("Later", null)
+                .show();
+    }
+
+    private void showOverlayPermissionDialog() {
+        new AlertDialog.Builder(this)
+                .setTitle("Overlay Permission")
+                .setMessage("SalahSilence needs permission to show over other apps to ensure reliable operation.")
+                .setPositiveButton("Grant", (dialog, which) -> {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName()));
+                    startActivityForResult(intent, REQUEST_OVERLAY_PERMISSION);
+                })
+                .setNegativeButton("Later", null)
+                .show();
     }
 
     @Override
@@ -124,12 +216,56 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
         }
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        
+        switch (requestCode) {
+            case REQUEST_IGNORE_BATTERY_OPTIMIZATIONS:
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                boolean isIgnoringBatteryOptimizations = pm.isIgnoringBatteryOptimizations(getPackageName());
+                if (isIgnoringBatteryOptimizations) {
+                    Toast.makeText(this, "Battery optimization disabled", Toast.LENGTH_SHORT).show();
+                }
+                break;
+                
+            case REQUEST_NOTIFICATION_POLICY:
+                NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm.isNotificationPolicyAccessGranted()) {
+                    Toast.makeText(this, "DND permission granted", Toast.LENGTH_SHORT).show();
+                }
+                break;
+                
+            case REQUEST_OVERLAY_PERMISSION:
+                if (Settings.canDrawOverlays(this)) {
+                    Toast.makeText(this, "Overlay permission granted", Toast.LENGTH_SHORT).show();
+                }
+                break;
+        }
+    }
+
     private void loadPrayerTimes() {
-        prayerTimes.add(new PrayerTime("Fajr", sharedPreferences.getString("fajr_start", "00:00"), sharedPreferences.getString("fajr_end", "00:00"), sharedPreferences.getBoolean("fajr_enabled", false)));
-        prayerTimes.add(new PrayerTime("Zuhr", sharedPreferences.getString("zuhr_start", "00:00"), sharedPreferences.getString("zuhr_end", "00:00"), sharedPreferences.getBoolean("zuhr_enabled", false)));
-        prayerTimes.add(new PrayerTime("Asr", sharedPreferences.getString("asr_start", "00:00"), sharedPreferences.getString("asr_end", "00:00"), sharedPreferences.getBoolean("asr_enabled", false)));
-        prayerTimes.add(new PrayerTime("Maghrib", sharedPreferences.getString("maghrib_start", "00:00"), sharedPreferences.getString("maghrib_end", "00:00"), sharedPreferences.getBoolean("maghrib_enabled", false)));
-        prayerTimes.add(new PrayerTime("Isha", sharedPreferences.getString("isha_start", "00:00"), sharedPreferences.getString("isha_end", "00:00"), sharedPreferences.getBoolean("isha_enabled", false)));
+        prayerTimes.clear();
+        prayerTimes.add(new PrayerTime("Fajr", 
+            sharedPreferences.getString("fajr_start", "00:00"),
+            sharedPreferences.getString("fajr_end", "00:00"),
+            sharedPreferences.getBoolean("fajr_enabled", false)));
+        prayerTimes.add(new PrayerTime("Zuhr",
+            sharedPreferences.getString("zuhr_start", "00:00"),
+            sharedPreferences.getString("zuhr_end", "00:00"),
+            sharedPreferences.getBoolean("zuhr_enabled", false)));
+        prayerTimes.add(new PrayerTime("Asr",
+            sharedPreferences.getString("asr_start", "00:00"),
+            sharedPreferences.getString("asr_end", "00:00"),
+            sharedPreferences.getBoolean("asr_enabled", false)));
+        prayerTimes.add(new PrayerTime("Maghrib",
+            sharedPreferences.getString("maghrib_start", "00:00"),
+            sharedPreferences.getString("maghrib_end", "00:00"),
+            sharedPreferences.getBoolean("maghrib_enabled", false)));
+        prayerTimes.add(new PrayerTime("Isha",
+            sharedPreferences.getString("isha_start", "00:00"),
+            sharedPreferences.getString("isha_end", "00:00"),
+            sharedPreferences.getBoolean("isha_enabled", false)));
         adapter.notifyDataSetChanged();
     }
 
@@ -145,69 +281,31 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
 
     @Override
     public void onEnableSwitchChange(PrayerTime prayerTime, boolean isChecked) {
-        sharedPreferences.edit().putBoolean(prayerTime.getName().toLowerCase() + "_enabled", isChecked).apply();
-        if (isChecked) {
-            scheduleAlarm(prayerTime.getName().toLowerCase(), prayerTime.getStartTime(), prayerTime.getEndTime());
-        } else {
-            cancelAlarm(prayerTime.getName().toLowerCase());
-        }
+        String prayerKey = prayerTime.getName().toLowerCase();
+        sharedPreferences.edit().putBoolean(prayerKey + "_enabled", isChecked).apply();
+        prayerTime.setEnabled(isChecked);
+        SilentModeReceiver.scheduleSilentMode(this, prayerTime);
     }
 
     private void showTimePickerDialog(PrayerTime prayerTime, boolean isStartTime) {
         TimePickerDialog timePickerDialog = new TimePickerDialog(this, (view, hourOfDay, minute) -> {
             String time = String.format("%02d:%02d", hourOfDay, minute);
+            String prayerKey = prayerTime.getName().toLowerCase();
+            
             if (isStartTime) {
                 prayerTime.setStartTime(time);
-                sharedPreferences.edit().putString(prayerTime.getName().toLowerCase() + "_start", time).apply();
+                sharedPreferences.edit().putString(prayerKey + "_start", time).apply();
             } else {
                 prayerTime.setEndTime(time);
-                sharedPreferences.edit().putString(prayerTime.getName().toLowerCase() + "_end", time).apply();
+                sharedPreferences.edit().putString(prayerKey + "_end", time).apply();
             }
+            
             adapter.notifyDataSetChanged();
+            
+            if (prayerTime.isEnabled()) {
+                SilentModeReceiver.scheduleSilentMode(this, prayerTime);
+            }
         }, 0, 0, false);
         timePickerDialog.show();
-    }
-
-    private void scheduleAlarm(String prayerKey, String startTime, String endTime) {
-        Calendar startCalendar = Calendar.getInstance();
-        Calendar endCalendar = Calendar.getInstance();
-
-        String[] startParts = startTime.split(":");
-        String[] endParts = endTime.split(":");
-
-        startCalendar.set(Calendar.HOUR_OF_DAY, Integer.parseInt(startParts[0]));
-        startCalendar.set(Calendar.MINUTE, Integer.parseInt(startParts[1]));
-        endCalendar.set(Calendar.HOUR_OF_DAY, Integer.parseInt(endParts[0]));
-        endCalendar.set(Calendar.MINUTE, Integer.parseInt(endParts[1]));
-
-        Intent startIntent = new Intent(this, SilentModeReceiver.class);
-        startIntent.putExtra("prayer", prayerKey);
-        startIntent.putExtra("action", "start");
-        PendingIntent startPendingIntent = PendingIntent.getBroadcast(this, 0, startIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        Intent endIntent = new Intent(this, SilentModeReceiver.class);
-        endIntent.putExtra("prayer", prayerKey);
-        endIntent.putExtra("action", "end");
-        PendingIntent endPendingIntent = PendingIntent.getBroadcast(this, 0, endIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        alarmManager.setExact(AlarmManager.RTC_WAKEUP, startCalendar.getTimeInMillis(), startPendingIntent);
-        alarmManager.setExact(AlarmManager.RTC_WAKEUP, endCalendar.getTimeInMillis(), endPendingIntent);
-
-
-    }
-
-    private void cancelAlarm(String prayerKey) {
-        Intent startIntent = new Intent(this, SilentModeReceiver.class);
-        startIntent.putExtra("prayer", prayerKey);
-        startIntent.putExtra("action", "start");
-        PendingIntent startPendingIntent = PendingIntent.getBroadcast(this, 0, startIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        Intent endIntent = new Intent(this, SilentModeReceiver.class);
-        endIntent.putExtra("prayer", prayerKey);
-        endIntent.putExtra("action", "end");
-        PendingIntent endPendingIntent = PendingIntent.getBroadcast(this, 0, endIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        alarmManager.cancel(startPendingIntent);
-        alarmManager.cancel(endPendingIntent);
     }
 }

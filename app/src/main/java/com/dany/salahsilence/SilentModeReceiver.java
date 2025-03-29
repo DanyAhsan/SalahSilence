@@ -7,7 +7,6 @@ import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.media.AudioManager;
 import android.os.Build;
 import android.provider.Settings;
 
@@ -24,89 +23,35 @@ public class SilentModeReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        NotificationManager notificationManager =
-                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-
-        // Check if Do Not Disturb permission is granted
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
-                !notificationManager.isNotificationPolicyAccessGranted()) {
-
-            // Create a notification to prompt user to grant permission
-            showDoNotDisturbPermissionNotification(context);
-            return;
-        }
-
         String action = intent.getAction();
         String prayer = intent.getStringExtra("prayer");
-        AudioManager audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
 
-        try {
-            if (ACTION_SILENT_MODE_START.equals(action)) {
-                // Attempt to set silent mode
-                audioManager.setRingerMode(AudioManager.RINGER_MODE_SILENT);
-                showNotification(context, prayer, "Silent mode enabled for " + prayer);
-            } else if (ACTION_SILENT_MODE_END.equals(action)) {
-                // Restore normal mode
-                audioManager.setRingerMode(AudioManager.RINGER_MODE_NORMAL);
-                showNotification(context, prayer, "Silent mode disabled for " + prayer);
-            }
-        } catch (SecurityException e) {
-            // If permission is revoked, show a notification
-            showDoNotDisturbPermissionNotification(context);
-        }
-    }
+        // Start the foreground service
+        Intent serviceIntent = new Intent(context, SilentModeService.class);
+        serviceIntent.putExtra("action", ACTION_SILENT_MODE_START.equals(action) ? "start" : "end");
+        serviceIntent.putExtra("prayer", prayer);
 
-    private void showDoNotDisturbPermissionNotification(Context context) {
-        NotificationManager notificationManager =
-                (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
-
-        // Create notification channel for Android Oreo and above
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel channel = new NotificationChannel(
-                    CHANNEL_ID,
-                    "SalahSilence Permissions",
-                    NotificationManager.IMPORTANCE_HIGH
-            );
-            notificationManager.createNotificationChannel(channel);
+            ContextCompat.startForegroundService(context, serviceIntent);
+        } else {
+            context.startService(serviceIntent);
         }
-
-        // Create an intent to open Do Not Disturb access settings
-        Intent settingsIntent = new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS);
-        PendingIntent pendingIntent = PendingIntent.getActivity(
-                context,
-                0,
-                settingsIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
-
-        // Build notification
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setContentTitle("SalahSilence Permission Required")
-                .setContentText("Please grant Do Not Disturb access to enable silent mode")
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setContentIntent(pendingIntent)
-                .setAutoCancel(true);
-
-        notificationManager.notify(999, builder.build());
     }
 
     public static void scheduleSilentMode(Context context, PrayerTime prayerTime) {
-        // Check Do Not Disturb permission before scheduling
+        // Check Do Not Disturb permission
         NotificationManager notificationManager =
                 (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
                 !notificationManager.isNotificationPolicyAccessGranted()) {
-            // Prompt user to grant permission
-            Intent settingsIntent = new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS);
-            context.startActivity(settingsIntent);
+            showDoNotDisturbPermissionNotification(context);
             return;
         }
 
         AlarmManager alarmManager = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
 
-        // Parse start and end times (existing parsing logic)
+        // Parse start and end times
         String[] startTimeParts = prayerTime.getStartTime().split(":");
         String[] endTimeParts = prayerTime.getEndTime().split(":");
 
@@ -121,6 +66,15 @@ public class SilentModeReceiver extends BroadcastReceiver {
         endCalendar.set(Calendar.MINUTE, Integer.parseInt(endTimeParts[1]));
         endCalendar.set(Calendar.SECOND, 0);
 
+        // If time has passed for today, schedule for tomorrow
+        Calendar now = Calendar.getInstance();
+        if (startCalendar.before(now)) {
+            startCalendar.add(Calendar.DAY_OF_MONTH, 1);
+        }
+        if (endCalendar.before(now)) {
+            endCalendar.add(Calendar.DAY_OF_MONTH, 1);
+        }
+
         // Create intents for start and end of silent mode
         Intent startIntent = new Intent(context, SilentModeReceiver.class);
         startIntent.setAction(ACTION_SILENT_MODE_START);
@@ -130,9 +84,9 @@ public class SilentModeReceiver extends BroadcastReceiver {
         endIntent.setAction(ACTION_SILENT_MODE_END);
         endIntent.putExtra("prayer", prayerTime.getName());
 
-        // Create pending intents
-        int startRequestCode = prayerTime.getName().hashCode() + 1000;
-        int endRequestCode = prayerTime.getName().hashCode() + 2000;
+        // Create unique request codes based on prayer name and time
+        int startRequestCode = (prayerTime.getName() + "_start").hashCode();
+        int endRequestCode = (prayerTime.getName() + "_end").hashCode();
 
         PendingIntent startPendingIntent = PendingIntent.getBroadcast(
                 context,
@@ -148,11 +102,13 @@ public class SilentModeReceiver extends BroadcastReceiver {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        // Schedule alarms
+        // Schedule alarms with exact timing and wake up
         if (prayerTime.isEnabled()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, startCalendar.getTimeInMillis(), startPendingIntent);
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, endCalendar.getTimeInMillis(), endPendingIntent);
+                alarmManager.setAlarmClock(new AlarmManager.AlarmClockInfo(
+                        startCalendar.getTimeInMillis(), startPendingIntent), startPendingIntent);
+                alarmManager.setAlarmClock(new AlarmManager.AlarmClockInfo(
+                        endCalendar.getTimeInMillis(), endPendingIntent), endPendingIntent);
             } else {
                 alarmManager.setExact(AlarmManager.RTC_WAKEUP, startCalendar.getTimeInMillis(), startPendingIntent);
                 alarmManager.setExact(AlarmManager.RTC_WAKEUP, endCalendar.getTimeInMillis(), endPendingIntent);
@@ -164,25 +120,35 @@ public class SilentModeReceiver extends BroadcastReceiver {
         }
     }
 
-    private void showNotification(Context context, String prayer, String message) {
+    private static void showDoNotDisturbPermissionNotification(Context context) {
         NotificationManager notificationManager =
                 (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID,
-                    "SalahSilence Notifications",
-                    NotificationManager.IMPORTANCE_DEFAULT
+                    "SalahSilence Permissions",
+                    NotificationManager.IMPORTANCE_HIGH
             );
             notificationManager.createNotificationChannel(channel);
         }
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
-                .setContentTitle("SalahSilence")
-                .setContentText(message)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT);
+        Intent settingsIntent = new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                settingsIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
 
-        notificationManager.notify(prayer.hashCode(), builder.build());
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
+                .setContentTitle("SalahSilence Permission Required")
+                .setContentText("Please grant Do Not Disturb access to enable silent mode")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true);
+
+        notificationManager.notify(999, builder.build());
     }
 }
