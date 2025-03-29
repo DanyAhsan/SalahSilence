@@ -7,6 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.location.Location;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -77,7 +78,6 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
 
         setupRetrofit();
@@ -149,6 +149,23 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
     }
 
     private void fetchPrayerTimes() {
+        // First check if location services are enabled
+        LocationManager locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            // Location is not enabled, show dialog to enable it
+            new AlertDialog.Builder(this)
+                .setTitle("Location Required")
+                .setMessage("Please enable location services to fetch prayer times automatically.")
+                .setPositiveButton("Open Settings", (dialogInterface, i) -> {
+                    Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+                    startActivity(intent);
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+            return;
+        }
+
+        // Location is enabled, proceed with permission check and location fetch
         if (checkLocationPermission()) {
             fusedLocationClient.getLastLocation()
                     .addOnSuccessListener(this, location -> {
