@@ -6,6 +6,7 @@ import android.app.TimePickerDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.location.Location;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -36,12 +37,29 @@ import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.switchmaterial.SwitchMaterial;
 import com.google.android.material.snackbar.Snackbar;
+import com.dany.salahsilence.api.PrayerTimesApi;
+import com.dany.salahsilence.api.PrayerTimesResponse;
+import com.google.android.gms.location.FusedLocationProviderClient;
+import com.google.android.gms.location.LocationServices;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.List;
 
+import retrofit2.Call;
+import retrofit2.Callback;
+import retrofit2.Response;
+import retrofit2.Retrofit;
+import retrofit2.converter.gson.GsonConverterFactory;
+import okhttp3.OkHttpClient;
+import okhttp3.logging.HttpLoggingInterceptor;
+
 public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter.OnItemClickListener {
+
+    private static final String BASE_URL = "https://api.aladhan.com/";
+    private static final int LOCATION_PERMISSION_REQUEST_CODE = 1234;
+    private static final int METHOD_ID = 2; // Islamic Society of North America (ISNA)
 
     private SharedPreferences sharedPreferences;
     private AlarmManager alarmManager;
@@ -52,6 +70,9 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
     private static final int REQUEST_IGNORE_BATTERY_OPTIMIZATIONS = 1001;
     private static final int REQUEST_NOTIFICATION_POLICY = 1002;
     private static final int REQUEST_OVERLAY_PERMISSION = 1003;
+    private FusedLocationProviderClient fusedLocationClient;
+    private PrayerTimesApi prayerTimesApi;
+    private FloatingActionButton autoFetchButton;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -59,24 +80,10 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
         EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
 
-        sharedPreferences = getSharedPreferences("PrayerTimes", Context.MODE_PRIVATE);
-        alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-
-        RecyclerView recyclerView = findViewById(R.id.prayer_times_recycler_view);
-        recyclerView.setLayoutManager(new LinearLayoutManager(this));
-
-        prayerTimes = new ArrayList<>();
-        adapter = new PrayerTimeAdapter(this, prayerTimes, this);
-        recyclerView.setAdapter(adapter);
-
-        loadPrayerTimes();
-
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SCHEDULE_EXACT_ALARM)
-                != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.SCHEDULE_EXACT_ALARM},
-                    REQUEST_CODE_EXACT_ALARM_PERMISSION);
-        }
+        setupRetrofit();
+        setupViews();
+        checkAndRequestPermissions();
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
@@ -86,7 +93,6 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
 
         // Request battery optimization immediately after onCreate
         requestBatteryOptimization();
-        checkAndRequestPermissions();
     }
 
     @Override
@@ -99,6 +105,135 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
                 requestBatteryOptimization();
             }
         }
+    }
+
+    private void setupRetrofit() {
+        HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor();
+        loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.BODY);
+
+        OkHttpClient client = new OkHttpClient.Builder()
+                .addInterceptor(loggingInterceptor)
+                .build();
+
+        Retrofit retrofit = new Retrofit.Builder()
+                .baseUrl(BASE_URL)
+                .client(client)
+                .addConverterFactory(GsonConverterFactory.create())
+                .build();
+
+        prayerTimesApi = retrofit.create(PrayerTimesApi.class);
+    }
+
+    private void setupViews() {
+        sharedPreferences = getSharedPreferences("PrayerTimes", Context.MODE_PRIVATE);
+        alarmManager = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+
+        RecyclerView recyclerView = findViewById(R.id.prayer_times_recycler_view);
+        recyclerView.setLayoutManager(new LinearLayoutManager(this));
+
+        prayerTimes = new ArrayList<>();
+        adapter = new PrayerTimeAdapter(this, prayerTimes, this);
+        recyclerView.setAdapter(adapter);
+
+        autoFetchButton = findViewById(R.id.auto_fetch_button);
+        autoFetchButton.setOnClickListener(v -> fetchPrayerTimes());
+
+        loadPrayerTimes();
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SCHEDULE_EXACT_ALARM)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.SCHEDULE_EXACT_ALARM},
+                    REQUEST_CODE_EXACT_ALARM_PERMISSION);
+        }
+    }
+
+    private void fetchPrayerTimes() {
+        if (checkLocationPermission()) {
+            fusedLocationClient.getLastLocation()
+                    .addOnSuccessListener(this, location -> {
+                        if (location != null) {
+                            callPrayerTimesApi(location.getLatitude(), location.getLongitude());
+                        } else {
+                            Toast.makeText(this, "Unable to get location", Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        Toast.makeText(this, "Error getting location: " + e.getMessage(), 
+                            Toast.LENGTH_SHORT).show();
+                    });
+        }
+    }
+
+    private void callPrayerTimesApi(double latitude, double longitude) {
+        prayerTimesApi.getPrayerTimes(latitude, longitude, METHOD_ID)
+                .enqueue(new Callback<PrayerTimesResponse>() {
+                    @Override
+                    public void onResponse(Call<PrayerTimesResponse> call, 
+                            Response<PrayerTimesResponse> response) {
+                        if (response.isSuccessful() && response.body() != null) {
+                            updatePrayerTimes(response.body().data.timings);
+                        } else {
+                            Toast.makeText(MainActivity.this, 
+                                "Error fetching prayer times", Toast.LENGTH_SHORT).show();
+                        }
+                    }
+
+                    @Override
+                    public void onFailure(Call<PrayerTimesResponse> call, Throwable t) {
+                        Toast.makeText(MainActivity.this, 
+                            "Network error: " + t.getMessage(), Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
+    private void updatePrayerTimes(PrayerTimesResponse.Timings timings) {
+        // Update Fajr
+        updatePrayerTime("fajr", timings.fajr, 30);
+        // Update Dhuhr (Zuhr)
+        updatePrayerTime("zuhr", timings.dhuhr, 30);
+        // Update Asr
+        updatePrayerTime("asr", timings.asr, 30);
+        // Update Maghrib
+        updatePrayerTime("maghrib", timings.maghrib, 30);
+        // Update Isha
+        updatePrayerTime("isha", timings.isha, 30);
+
+        loadPrayerTimes(); // Reload the UI
+        Toast.makeText(this, "Prayer times updated successfully", Toast.LENGTH_SHORT).show();
+    }
+
+    private void updatePrayerTime(String prayer, String startTime, int durationMinutes) {
+        // Parse the time (format: HH:mm)
+        String[] parts = startTime.split(":");
+        int hour = Integer.parseInt(parts[0]);
+        int minute = Integer.parseInt(parts[1]);
+
+        // Calculate end time
+        Calendar calendar = Calendar.getInstance();
+        calendar.set(Calendar.HOUR_OF_DAY, hour);
+        calendar.set(Calendar.MINUTE, minute);
+        calendar.add(Calendar.MINUTE, durationMinutes);
+
+        String endTime = String.format("%02d:%02d", 
+            calendar.get(Calendar.HOUR_OF_DAY), calendar.get(Calendar.MINUTE));
+
+        // Save to SharedPreferences
+        SharedPreferences.Editor editor = sharedPreferences.edit();
+        editor.putString(prayer + "_start", startTime);
+        editor.putString(prayer + "_end", endTime);
+        editor.apply();
+    }
+
+    private boolean checkLocationPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
+                    LOCATION_PERMISSION_REQUEST_CODE);
+            return false;
+        }
+        return true;
     }
 
     private void requestBatteryOptimization() {
