@@ -3,20 +3,31 @@
     <style name="Base.Theme.SalahSilence" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- Customize your light theme here. -->
         <item name="colorPrimary">@color/primary</item>
-        <item name="colorPrimaryVariant">@color/primary</item>
-        <item name="colorOnPrimary">@color/white</item>
         <item name="colorSecondary">@color/secondary</item>
-        <item name="colorSecondaryVariant">@color/secondary</item>
-        <item name="colorOnSecondary">@color/black</item>
         <item name="android:colorBackground">@color/background</item>
-        <item name="colorAccent">@color/accent</item>
-        <item name="android:textColorPrimary">@color/text_primary</item>
-        <item name="android:textColorSecondary">@color/text_secondary</item>
-        <item name="android:statusBarColor">@color/primary</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorOnSecondary">@color/black</item>
+        <item name="colorOnBackground">@color/text_primary</item>
+        <item name="colorOnSurface">@color/text_primary</item>
+        <item name="colorError">@android:color/holo_red_light</item>
+        <item name="colorOnError">@color/white</item>
+        
+        <!-- Status bar color. -->
+        <item name="android:statusBarColor">?attr/colorPrimaryVariant</item> 
+        <!-- Customize your theme here. -->
     </style>
 
     <style name="Theme.SalahSilence" parent="Base.Theme.SalahSilence" />
     
+    <!-- Custom Popup Menu Theme -->
+    <style name="ThemeOverlay.App.PopupMenu" parent="Widget.Material3.PopupMenu.Overflow">
+        <item name="android:popupBackground">@color/surface</item> <!-- Set the entire popup window background -->
+        <item name="android:textColor">@color/text_primary</item> <!-- Use android:textColor for items -->
+        <item name="android:fontFamily">@font/outfitregular</item> 
+        <!-- Potentially remove android:background if the parent handles it -->
+    </style>
+
     <!-- Splash screen theme -->
     <style name="Theme.SalahSilence.Splash" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/background</item>

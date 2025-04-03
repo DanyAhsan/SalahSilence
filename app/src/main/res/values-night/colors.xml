@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- Dark Theme Colors - Refined -->
+    <color name="primary">#64B5F6</color>      
+    <color name="primaryVariant">#2196F3</color>
+    <color name="secondary">#FFD54F</color>     
+    <color name="secondaryVariant">#FFC107</color>
+    <color name="background">#1C1C1E</color>     <!-- Slightly darker gray -->
+    <color name="surface">#2C2C2E</color>        <!-- Lighter gray for cards/surfaces -->
+    <color name="text_primary">#F2F2F7</color>    <!-- Near white text -->
+    <color name="text_secondary">#AEAEB2</color>   <!-- Lighter gray secondary text -->
+    <color name="accent">#FFD54F</color>
+
+</resources> 

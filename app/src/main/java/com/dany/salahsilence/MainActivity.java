@@ -30,6 +30,8 @@ import androidx.core.content.ContextCompat;
 
 import androidx.activity.EdgeToEdge;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.appcompat.widget.Toolbar;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -42,6 +44,8 @@ import com.dany.salahsilence.api.PrayerTimesApi;
 import com.dany.salahsilence.api.PrayerTimesResponse;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.location.Priority;
+import com.google.android.gms.tasks.CancellationTokenSource;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import java.util.ArrayList;
@@ -55,6 +59,29 @@ import retrofit2.Retrofit;
 import retrofit2.converter.gson.GsonConverterFactory;
 import okhttp3.OkHttpClient;
 import okhttp3.logging.HttpLoggingInterceptor;
+
+import android.view.Menu;
+import android.view.MenuItem;
+
+import android.graphics.Typeface;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.style.TypefaceSpan;
+import androidx.core.content.res.ResourcesCompat;
+import androidx.core.provider.FontsContractCompat;
+import androidx.core.graphics.TypefaceCompat;
+
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
+import android.content.IntentFilter;
+import android.os.Environment;
+import androidx.core.content.FileProvider;
+import java.io.File;
+import com.dany.salahsilence.updater.GitHubApiService;
+import com.dany.salahsilence.updater.GitHubRelease;
+import android.content.pm.PackageInfo;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 
 public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter.OnItemClickListener {
 
@@ -74,11 +101,65 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
     private FusedLocationProviderClient fusedLocationClient;
     private PrayerTimesApi prayerTimesApi;
     private FloatingActionButton autoFetchButton;
+    private static final String PREF_KEY_THEME = "pref_theme";
+    private Toolbar toolbar;
+
+    private static final String GITHUB_API_BASE_URL = "https://api.github.com/";
+    private static final String GITHUB_USER = "DanyAhsan";
+    private static final String GITHUB_REPO = "SalahSilence";
+    private Retrofit githubRetrofitClient = null;
+    private DownloadManager downloadManager;
+    private long lastDownloadId = -1L;
+
+    // BroadcastReceiver to listen for download completion
+    private final BroadcastReceiver downloadReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+            if (id == lastDownloadId) {
+                DownloadManager.Query query = new DownloadManager.Query();
+                query.setFilterById(id);
+                android.database.Cursor cursor = downloadManager.query(query);
+                if (cursor.moveToFirst()) {
+                    int statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+                    int status = cursor.getInt(statusIndex);
+                    if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                        int uriIndex = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI);
+                        String downloadedFileUriString = cursor.getString(uriIndex);
+                        Log.d("UpdateDownload", "Download successful. URI: " + downloadedFileUriString);
+                        // Convert content:// URI to File path if needed, or directly use URI
+                        // For simplicity, let's assume DownloadManager saves where we can access it
+                        // NOTE: Getting a File object directly from content URI can be tricky. Install directly from URI.
+                        Uri downloadedUri = Uri.parse(downloadedFileUriString);
+                        checkInstallPermissionAndInstall(downloadedUri); // Use the URI directly
+                    } else {
+                        int reasonIndex = cursor.getColumnIndex(DownloadManager.COLUMN_REASON);
+                        int reason = cursor.getInt(reasonIndex);
+                        Log.e("UpdateDownload", "Download failed. Status: " + status + ", Reason: " + reason);
+                        Toast.makeText(context, "Update download failed.", Toast.LENGTH_LONG).show();
+                    }
+                }
+                 cursor.close();
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Apply the saved theme before setting the content view
+        applyTheme(); 
         setContentView(R.layout.activity_main);
+
+        toolbar = findViewById(R.id.toolbar);
+        setSupportActionBar(toolbar);
+        // Remove default title to set a custom one with font
+        if (getSupportActionBar() != null) {
+           getSupportActionBar().setDisplayShowTitleEnabled(false);
+        }
+        
+        // Apply custom font to Toolbar title
+        applyToolbarFont(); 
 
         setupRetrofit();
         setupViews();
@@ -93,6 +174,10 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
 
         // Request battery optimization immediately after onCreate
         requestBatteryOptimization();
+
+        downloadManager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        // Register the receiver for download completion
+        registerReceiver(downloadReceiver, new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), RECEIVER_EXPORTED);
     }
 
     @Override
@@ -105,6 +190,13 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
                 requestBatteryOptimization();
             }
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // Unregister the receiver to avoid leaks
+        unregisterReceiver(downloadReceiver);
     }
 
     private void setupRetrofit() {
@@ -151,11 +243,12 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
     private void fetchPrayerTimes() {
         // First check if location services are enabled
         LocationManager locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
-        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) && 
+            !locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) { // Check both GPS and Network
             // Location is not enabled, show dialog to enable it
             new AlertDialog.Builder(this)
                 .setTitle("Location Required")
-                .setMessage("Please enable location services to fetch prayer times automatically.")
+                .setMessage("Please enable location services (GPS or Network) to fetch prayer times automatically.")
                 .setPositiveButton("Open Settings", (dialogInterface, i) -> {
                     Intent intent = new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS);
                     startActivity(intent);
@@ -167,18 +260,53 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
 
         // Location is enabled, proceed with permission check and location fetch
         if (checkLocationPermission()) {
+            // Try getting the last known location first (fast)
             fusedLocationClient.getLastLocation()
-                    .addOnSuccessListener(this, location -> {
-                        if (location != null) {
-                            callPrayerTimesApi(location.getLatitude(), location.getLongitude());
-                        } else {
-                            Toast.makeText(this, "Unable to get location", Toast.LENGTH_SHORT).show();
-                        }
-                    })
-                    .addOnFailureListener(e -> {
-                        Toast.makeText(this, "Error getting location: " + e.getMessage(), 
-                            Toast.LENGTH_SHORT).show();
-                    });
+                .addOnSuccessListener(this, lastLocation -> {
+                    if (lastLocation != null) {
+                        Log.d("Location", "Using last known location.");
+                        callPrayerTimesApi(lastLocation.getLatitude(), lastLocation.getLongitude());
+                    } else {
+                        // Last location is null, request current location (might take time)
+                        Log.d("Location", "Last known location is null. Requesting current location.");
+                        Toast.makeText(this, "Getting current location...", Toast.LENGTH_SHORT).show(); 
+                        CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+                        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellationTokenSource.getToken())
+                            .addOnSuccessListener(this, currentLocation -> {
+                                if (currentLocation != null) {
+                                    Log.d("Location", "Successfully got current location.");
+                                    callPrayerTimesApi(currentLocation.getLatitude(), currentLocation.getLongitude());
+                                } else {
+                                    Log.w("Location", "getCurrentLocation returned null.");
+                                    Toast.makeText(this, "Unable to get current location.", Toast.LENGTH_SHORT).show();
+                                }
+                            })
+                            .addOnFailureListener(this, e -> {
+                                Log.e("Location", "Error getting current location", e);
+                                Toast.makeText(this, "Error getting current location: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                            });
+                    }
+                })
+                .addOnFailureListener(this, e -> {
+                    // This failure is for getLastLocation, but we should still try getCurrentLocation
+                    Log.e("Location", "Error getting last location, trying current", e);
+                    Toast.makeText(this, "Getting current location...", Toast.LENGTH_SHORT).show();
+                    CancellationTokenSource cancellationTokenSource = new CancellationTokenSource();
+                     fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellationTokenSource.getToken())
+                        .addOnSuccessListener(this, currentLocation -> {
+                             if (currentLocation != null) {
+                                Log.d("Location", "Successfully got current location after lastLocation failure.");
+                                callPrayerTimesApi(currentLocation.getLatitude(), currentLocation.getLongitude());
+                             } else {
+                                Log.w("Location", "getCurrentLocation returned null after lastLocation failure.");
+                                Toast.makeText(this, "Unable to get current location.", Toast.LENGTH_SHORT).show();
+                             }
+                        })
+                        .addOnFailureListener(this, currentE -> {
+                            Log.e("Location", "Error getting current location after lastLocation failure", currentE);
+                            Toast.makeText(this, "Error getting current location: " + currentE.getMessage(), Toast.LENGTH_SHORT).show();
+                        });
+                });
         }
     }
 
@@ -459,5 +587,352 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
             }
         }, 0, 0, false);
         timePickerDialog.show();
+    }
+
+    private void applyTheme() {
+        sharedPreferences = getSharedPreferences("PrayerTimes", Context.MODE_PRIVATE);
+        int savedThemeMode = sharedPreferences.getInt(PREF_KEY_THEME, AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+        AppCompatDelegate.setDefaultNightMode(savedThemeMode);
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.main_menu, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(@NonNull MenuItem item) {
+        int themeMode = AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM; // Default
+        int itemId = item.getItemId();
+
+        if (itemId == R.id.theme_light) {
+            themeMode = AppCompatDelegate.MODE_NIGHT_NO;
+        } else if (itemId == R.id.theme_dark) {
+            themeMode = AppCompatDelegate.MODE_NIGHT_YES;
+        } else if (itemId == R.id.theme_system) {
+            themeMode = AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM;
+        } else if (itemId == R.id.action_check_update) {
+             checkForUpdates(); // Call the update check method
+             return true;
+        } else {
+            return super.onOptionsItemSelected(item);
+        }
+
+        // Save the selected theme mode
+        sharedPreferences.edit().putInt(PREF_KEY_THEME, themeMode).apply();
+        // Apply the theme immediately
+        AppCompatDelegate.setDefaultNightMode(themeMode);
+        // The activity will be recreated to apply the theme change
+        
+        return true;
+    }
+
+    private void applyToolbarFont() {
+        try {
+            // Load the font
+            Typeface outfitFont = ResourcesCompat.getFont(this, R.font.outfitregular);
+
+            if (outfitFont != null && toolbar != null) {
+                // Get the title string
+                CharSequence title = "SalahSilence"; // Or get dynamically if needed
+                
+                // Create a SpannableString
+                SpannableString spannableTitle = new SpannableString(title);
+                
+                // Apply the font using TypefaceSpan (handle potential API level differences)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    spannableTitle.setSpan(new TypefaceSpan(outfitFont), 0, spannableTitle.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                } else {
+                    // For older versions, create a custom span or use deprecated TypefaceSpan constructor if available
+                    // This custom span is a safer approach for older APIs
+                    spannableTitle.setSpan(new CustomTypefaceSpan("", outfitFont), 0, spannableTitle.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+                }
+                
+                // Set the title with the custom font
+                toolbar.setTitle(spannableTitle);
+            }
+        } catch (Exception e) {
+            Log.e("MainActivity", "Error loading or applying font to toolbar title", e);
+            // Fallback if font loading fails - set plain title
+            if (toolbar != null) {
+                 toolbar.setTitle("SalahSilence");
+            }
+        }
+    }
+
+    // Custom TypefaceSpan for older APIs (if needed)
+    public static class CustomTypefaceSpan extends TypefaceSpan {
+        private final Typeface newType;
+
+        public CustomTypefaceSpan(String family, Typeface type) {
+            super(family); // Pass family string for compatibility
+            newType = type;
+        }
+
+        @Override
+        public void updateDrawState(android.text.TextPaint ds) {
+            applyCustomTypeFace(ds, newType);
+        }
+
+        @Override
+        public void updateMeasureState(android.text.TextPaint paint) {
+            applyCustomTypeFace(paint, newType);
+        }
+
+        private static void applyCustomTypeFace(android.graphics.Paint paint, Typeface tf) {
+            int oldStyle;
+            Typeface old = paint.getTypeface();
+            if (old == null) {
+                oldStyle = 0;
+            } else {
+                oldStyle = old.getStyle();
+            }
+
+            int fake = oldStyle & ~tf.getStyle();
+            if ((fake & Typeface.BOLD) != 0) {
+                paint.setFakeBoldText(true);
+            }
+
+            if ((fake & Typeface.ITALIC) != 0) {
+                paint.setFakeBoldText(true);
+            }
+
+            paint.setTypeface(tf);
+        }
+    }
+
+    // Initialize Retrofit client for GitHub API
+    private GitHubApiService getGitHubApiClient() {
+        if (githubRetrofitClient == null) {
+            // You might want a separate OkHttpClient instance if you need specific config for GitHub
+            githubRetrofitClient = new Retrofit.Builder()
+                    .baseUrl(GITHUB_API_BASE_URL)
+                    .addConverterFactory(GsonConverterFactory.create()) // Ensure Gson converter
+                    .client(new OkHttpClient.Builder().build()) // Use default or configure as needed
+                    .build();
+        }
+        return githubRetrofitClient.create(GitHubApiService.class);
+    }
+
+    // Method to initiate the update check
+    private void checkForUpdates() {
+        Log.d("UpdateCheck", "Checking for updates...");
+        if (!isNetworkAvailable()) {
+            Toast.makeText(this, "No internet connection.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        String currentVersionName = "";
+        try {
+            PackageInfo pInfo = getPackageManager().getPackageInfo(getPackageName(), 0);
+            currentVersionName = pInfo.versionName;
+        } catch (PackageManager.NameNotFoundException e) {
+            Log.e("UpdateCheck", "Failed to get package info", e);
+            Toast.makeText(this, "Error getting app version.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        GitHubApiService service = getGitHubApiClient();
+        Call<GitHubRelease> call = service.getLatestRelease(GITHUB_USER, GITHUB_REPO);
+        final String finalCurrentVersionName = currentVersionName; // For use in callback
+
+        Toast.makeText(this, "Checking for updates...", Toast.LENGTH_SHORT).show(); // Indicate check started
+
+        call.enqueue(new Callback<GitHubRelease>() {
+            @Override
+            public void onResponse(Call<GitHubRelease> call, Response<GitHubRelease> response) {
+                if (response.isSuccessful() && response.body() != null) {
+                    GitHubRelease latestRelease = response.body();
+                    Log.d("UpdateCheck", "Latest release tag: " + latestRelease.tagName);
+                    compareVersionsAndPrompt(latestRelease, finalCurrentVersionName);
+                } else {
+                    Log.e("UpdateCheck", "GitHub API error: " + response.code() + " - " + response.message());
+                     if (response.code() == 404) {
+                         Toast.makeText(MainActivity.this, "No releases found for this repository.", Toast.LENGTH_LONG).show();
+                     } else {
+                         Toast.makeText(MainActivity.this, "Failed to check for updates (API error).", Toast.LENGTH_SHORT).show();
+                     }
+                }
+            }
+
+            @Override
+            public void onFailure(Call<GitHubRelease> call, Throwable t) {
+                Log.e("UpdateCheck", "Network error checking GitHub API", t);
+                Toast.makeText(MainActivity.this, "Network error checking updates.", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void compareVersionsAndPrompt(GitHubRelease latestRelease, String currentVersionName) {
+        if (latestRelease == null || latestRelease.tagName == null) {
+             Log.e("UpdateCheck", "Invalid release data received.");
+             Toast.makeText(this, "Error reading update information.", Toast.LENGTH_SHORT).show();
+             return;
+        }
+        
+        String latestVersionName = latestRelease.tagName.replaceFirst("^[vV]", ""); // Remove leading 'v' or 'V'
+        String currentVersionClean = currentVersionName.replaceFirst("^[vV]", "");
+
+        Log.d("UpdateCheck", "Comparing Latest: '" + latestVersionName + "' with Current: '" + currentVersionClean + "'");
+
+        if (isNewerVersion(latestVersionName, currentVersionClean)) {
+            Log.d("UpdateCheck", "Update available.");
+            showUpdateDialog(latestRelease);
+        } else {
+            Log.d("UpdateCheck", "App is up to date or versions are equal/invalid.");
+            Toast.makeText(this, "App is up to date.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // Basic Version Comparison Helper (Refined for simplicity: X.Y)
+    private boolean isNewerVersion(String latestVersion, String currentVersion) {
+         if (latestVersion == null || currentVersion == null) return false;
+         try {
+             String[] latestParts = latestVersion.split("\\.");
+             String[] currentParts = currentVersion.split("\\.");
+
+             if (latestParts.length < 2 || currentParts.length < 2) {
+                 Log.w("VersionCompare", "Assuming simple format X.Y failed. Versions: " + latestVersion + ", " + currentVersion);
+                 // Fallback to simple string comparison if format is unexpected
+                 return latestVersion.compareTo(currentVersion) > 0; 
+             }
+
+             int latestMajor = Integer.parseInt(latestParts[0]);
+             int latestMinor = Integer.parseInt(latestParts[1]);
+             int currentMajor = Integer.parseInt(currentParts[0]);
+             int currentMinor = Integer.parseInt(currentParts[1]);
+
+             if (latestMajor > currentMajor) return true;
+             if (latestMajor == currentMajor && latestMinor > currentMinor) return true;
+
+             return false; // current is same or newer
+         } catch (NumberFormatException e) {
+             Log.e("VersionCompare", "Invalid version number format", e);
+             return false; // Cannot compare
+         }
+    }
+
+    private void showUpdateDialog(GitHubRelease release) {
+        String releaseNotes = release.body != null ? release.body : "No details provided.";
+        String title = release.releaseName != null ? release.releaseName : "Version " + release.tagName;
+        new AlertDialog.Builder(this)
+            .setTitle("Update Available")
+            .setMessage(title + "\n\nWhat's New:\n" + releaseNotes + "\n\nDownload and install?")
+            .setPositiveButton("Update Now", (dialog, which) -> {
+                findAndStartDownload(release);
+            })
+            .setNegativeButton("Later", null)
+            .show();
+    }
+
+    private void findAndStartDownload(GitHubRelease release) {
+        String apkUrl = null;
+        String apkName = "SalahSilence_update.apk"; // Default name
+        if (release.assets != null) {
+            for (GitHubRelease.Asset asset : release.assets) {
+                if (asset.name != null && asset.name.toLowerCase().endsWith(".apk")) {
+                    apkUrl = asset.downloadUrl;
+                    // Try to use the release name + version for a better filename
+                    apkName = asset.name; // Use the actual asset name from GitHub
+                    break;
+                }
+            }
+        }
+
+        if (apkUrl != null) {
+            Log.d("UpdateDownload", "Found APK URL: " + apkUrl);
+            startDownload(apkUrl, release.tagName, apkName);
+        } else {
+            Log.e("UpdateDownload", "Could not find APK download link in release assets.");
+            Toast.makeText(this, "Could not find APK download link.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void startDownload(String url, String version, String fileName) {
+         Log.d("UpdateDownload", "Starting download for: " + url);
+         Toast.makeText(this, "Starting update download...", Toast.LENGTH_SHORT).show();
+
+         Uri downloadUri = Uri.parse(url);
+         DownloadManager.Request request = new DownloadManager.Request(downloadUri);
+
+         request.setTitle("Downloading SalahSilence Update");
+         request.setDescription("Version " + version);
+         request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+         // Ensure MIME type is correct for APK
+         request.setMimeType("application/vnd.android.package-archive");
+
+         // Save to public Downloads directory with the specific filename from GitHub release
+         request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+
+         try {
+            lastDownloadId = downloadManager.enqueue(request);
+            Log.d("UpdateDownload", "Download enqueued with ID: " + lastDownloadId);
+         } catch (Exception e) {
+             Log.e("UpdateDownload", "Failed to enqueue download", e);
+             Toast.makeText(this, "Failed to start download.", Toast.LENGTH_SHORT).show();
+             lastDownloadId = -1L;
+         }
+    }
+
+    // Check install permission (Android 8+) and trigger install
+    private void checkInstallPermissionAndInstall(Uri apkUri) {
+         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+             if (!getPackageManager().canRequestPackageInstalls()) {
+                 showUnknownSourcesPermissionDialog();
+             } else {
+                 triggerInstall(apkUri);
+             }
+         } else {
+             triggerInstall(apkUri);
+         }
+     }
+
+    // Show dialog guiding user to grant install permission
+    private void showUnknownSourcesPermissionDialog() {
+         new AlertDialog.Builder(this)
+             .setTitle("Permission Required")
+             .setMessage("To install the update, please allow SalahSilence to install apps from unknown sources in Settings.")
+             .setPositiveButton("Open Settings", (dialog, which) -> {
+                 Intent intent = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES);
+                 intent.setData(Uri.parse("package:" + getPackageName()));
+                 // Consider using startActivityForResult if you want to check immediately after returning
+                 startActivity(intent);
+             })
+             .setNegativeButton("Cancel", null)
+             .show();
+     }
+
+    // Trigger the system package installer
+    private void triggerInstall(Uri apkUri) {
+        if (apkUri == null) {
+            Log.e("UpdateInstall", "APK URI is null, cannot install.");
+            Toast.makeText(this, "Update file URI not found.", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Log.d("UpdateInstall", "Attempting to install from URI: " + apkUri.toString());
+
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION); // Crucial for content URIs
+
+        try {
+            startActivity(intent);
+        } catch (android.content.ActivityNotFoundException e) {
+            Log.e("UpdateInstall", "Error starting package installer", e);
+            Toast.makeText(this, "Could not start installer. No app found to handle installation.", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Log.e("UpdateInstall", "Generic error starting package installer", e);
+            Toast.makeText(this, "Could not start installer.", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    // Helper to check network availability
+    private boolean isNetworkAvailable() {
+        ConnectivityManager connectivityManager
+                = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkInfo activeNetworkInfo = connectivityManager.getActiveNetworkInfo();
+        return activeNetworkInfo != null && activeNetworkInfo.isConnected();
     }
 }
