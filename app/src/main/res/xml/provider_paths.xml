@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Allow sharing files from the public external Downloads directory -->
+    <external-path name="external_download" path="Download/" />
+    <!-- You could also add internal cache path if needed -->
+    <!-- <cache-path name="cache_apk" path="." /> -->
+</paths> 
