@@ -10,7 +10,8 @@
     <item
         android:id="@+id/action_theme"
         android:title="Theme"
-        android:icon="@drawable/ic_brightness_6" 
+        android:icon="@drawable/ic_brightness_6"
+        app:iconTint="@color/white" 
         app:showAsAction="ifRoom">
         <menu>
             <item
