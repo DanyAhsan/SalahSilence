@@ -87,7 +87,7 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
 
     private static final String BASE_URL = "https://api.aladhan.com/";
     private static final int LOCATION_PERMISSION_REQUEST_CODE = 1234;
-    private static final int METHOD_ID = 2; // Islamic Society of North America (ISNA)
+    private static final int METHOD_ID = 1; // Islamic Society of karachi
 
     private SharedPreferences sharedPreferences;
     private AlarmManager alarmManager;
@@ -109,6 +109,10 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
     private static final String GITHUB_REPO = "SalahSilence";
     private Retrofit githubRetrofitClient = null;
     private DownloadManager downloadManager;
+    /**
+     * The ID of the last initiated download.  This is used to track downloads across app sessions
+     * and resume them if necessary.  A value of -1L indicates that no download is currently active.
+     */
     private long lastDownloadId = -1L;
 
     // BroadcastReceiver to listen for download completion
