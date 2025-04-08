@@ -88,6 +88,7 @@ public class SilentModeReceiver extends BroadcastReceiver {
         int startRequestCode = (prayerTime.getName() + "_start").hashCode();
         int endRequestCode = (prayerTime.getName() + "_end").hashCode();
 
+        // Use FLAG_UPDATE_CURRENT and FLAG_IMMUTABLE for better compatibility
         PendingIntent startPendingIntent = PendingIntent.getBroadcast(
                 context,
                 startRequestCode,
@@ -105,13 +106,41 @@ public class SilentModeReceiver extends BroadcastReceiver {
         // Schedule alarms with exact timing and wake up
         if (prayerTime.isEnabled()) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                alarmManager.setAlarmClock(new AlarmManager.AlarmClockInfo(
-                        startCalendar.getTimeInMillis(), startPendingIntent), startPendingIntent);
-                alarmManager.setAlarmClock(new AlarmManager.AlarmClockInfo(
-                        endCalendar.getTimeInMillis(), endPendingIntent), endPendingIntent);
+                // Use setAlarmClock for better reliability on newer Android versions
+                alarmManager.setAlarmClock(
+                    new AlarmManager.AlarmClockInfo(startCalendar.getTimeInMillis(), startPendingIntent),
+                    startPendingIntent
+                );
+                alarmManager.setAlarmClock(
+                    new AlarmManager.AlarmClockInfo(endCalendar.getTimeInMillis(), endPendingIntent),
+                    endPendingIntent
+                );
             } else {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, startCalendar.getTimeInMillis(), startPendingIntent);
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, endCalendar.getTimeInMillis(), endPendingIntent);
+                // For older versions, use setExactAndAllowWhileIdle
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        startCalendar.getTimeInMillis(),
+                        startPendingIntent
+                    );
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        endCalendar.getTimeInMillis(),
+                        endPendingIntent
+                    );
+                } else {
+                    // For very old versions, use setExact
+                    alarmManager.setExact(
+                        AlarmManager.RTC_WAKEUP,
+                        startCalendar.getTimeInMillis(),
+                        startPendingIntent
+                    );
+                    alarmManager.setExact(
+                        AlarmManager.RTC_WAKEUP,
+                        endCalendar.getTimeInMillis(),
+                        endPendingIntent
+                    );
+                }
             }
         } else {
             // Cancel existing alarms if the prayer time is disabled

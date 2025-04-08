@@ -191,9 +191,17 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
             if (!pm.isIgnoringBatteryOptimizations(getPackageName())) {
-                requestBatteryOptimization();
+                // Show a less intrusive reminder
+                Snackbar.make(findViewById(android.R.id.content), 
+                    "Battery optimization is enabled. This may affect app reliability.", 
+                    Snackbar.LENGTH_LONG)
+                    .setAction("Fix", v -> requestBatteryOptimization())
+                    .show();
             }
         }
+        
+        // Reschedule alarms when app resumes
+        loadPrayerTimes();
     }
 
     @Override
@@ -391,14 +399,26 @@ public class MainActivity extends AppCompatActivity implements PrayerTimeAdapter
                 PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
                 String packageName = getPackageName();
                 if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    // First try the standard way
                     Intent intent = new Intent();
                     intent.setAction(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
                     intent.setData(Uri.parse("package:" + packageName));
                     startActivityForResult(intent, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    
+                    // Also show a more detailed dialog explaining the importance
+                    new AlertDialog.Builder(this)
+                        .setTitle("Battery Optimization Required")
+                        .setMessage("SalahSilence needs to run in the background to manage your phone's silent mode during prayer times. Please disable battery optimization to ensure reliable operation.\n\n" +
+                                "Without this permission, the app may stop working after some time.")
+                        .setPositiveButton("Open Settings", (dialog, which) -> {
+                            Intent settingsIntent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                            startActivity(settingsIntent);
+                        })
+                        .setNegativeButton("Later", null)
+                        .show();
                 }
             } catch (Exception e) {
                 Log.e("BatteryOptimization", "Error requesting battery optimization: " + e.getMessage());
-                // Show a dialog to guide user to manually disable battery optimization
                 showManualBatteryOptimizationDialog();
             }
         }
